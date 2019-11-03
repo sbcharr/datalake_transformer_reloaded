@@ -94,8 +94,8 @@ def download_file_from_s3(w):
     #print("debug3")
     # print(w)
     # sys.exit(0)
+    time.sleep(2)
     s3.download_file(w[0], w[1], w[2])
-    time.sleep(1)
 
 
 def transform(table, run_date, put_date):

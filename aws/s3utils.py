@@ -52,7 +52,7 @@ class AwsS3Service:
             for obj in contents:
                 key = obj['Key']
                 if key.endswith(suffix):
-                    yield obj
+                    yield obj['Key']
 
     def load_object(self, bucket, prefix, key):
         try:

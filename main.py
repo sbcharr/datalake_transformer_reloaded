@@ -4,7 +4,7 @@ from datetime import datetime
 from aws import s3utils
 # import threading
 import time
-import sys
+import sys, os, shutil
 import multiprocessing as mp
 
 
@@ -84,18 +84,24 @@ def check_done_file(table, run_date):
 
 def get_matching_s3_keys(bucket, prefix=None, suffix=None):
     keys = []
-    for obj in s3.get_matching_objects(bucket, prefix, suffix):
-        keys.append(obj['Key'].strip())
+    for obj_key in s3.get_matching_objects(bucket, prefix, suffix):
+        keys.append(obj_key.strip())
 
     return keys
 
 
 def download_file_from_s3(w):
-    #print("debug3")
+    # print("debug3")
     # print(w)
     # sys.exit(0)
-    time.sleep(2)
+    time.sleep(1)
     s3.download_file(w[0], w[1], w[2])
+
+
+def validate_keys_after_download(path, suffix):
+    keys = [file for file in os.listdir(path) if os.isfile(os.path.join(path, file)) and
+            os.isfile(os.path.join(path, file)).endswith(suffix)]
+    return keys
 
 
 def transform(table, run_date, put_date):
@@ -113,16 +119,39 @@ def transform(table, run_date, put_date):
     keys_gpg = get_matching_s3_keys(c.SOURCE_BUCKET_NAME, prefix, suffix)
     if len(keys_gpg) == 0:
         log.error("no files in source s3 path {}".format(data_path))
-        sys.exit(1)
+        sys.exit(-1)
 
     work = []
     bucket = c.SOURCE_BUCKET_NAME
+    base_dir = "/home/ubuntu/data"
+    if not os.path.isdir(base_dir):
+        log.error("path to local directory {} doesn't exist, exiting...".format(base_dir))
+
+    if os.path.isdir(base_dir + '/' + prefix):
+        os.chdir(base_dir)
+        try:
+            shutil.rmtree(prefix)
+        except OSError:
+            print("Deletion of the directory {} failed".format(prefix))
+        else:
+            print("Successfully deleted the directory {}".format(prefix))
+
+    os.chdir(base_dir)
+    try:
+        os.makedirs(prefix)
+    except OSError:
+        print("Creation of the directory {} failed".format(prefix))
+    else:
+        print("Successfully created the directory {}".format(prefix))
+
     for key in keys_gpg:
         # print("key: ", key)
-        w = [bucket, key, '/home/ubuntu/data']
+        w = [bucket, key, base_dir]
         # print(type(w))
         work.append(w)
     # print(work)
+
+    # download files from S3
     with mp.Pool(mp.cpu_count()) as pool:
         # pool = mp.Pool(mp.cpu_count())
         _ = pool.map(download_file_from_s3, work)
@@ -130,8 +159,11 @@ def transform(table, run_date, put_date):
         pool.close()
         pool.join()
     # log.info("downloaded files from s3 file path {}".format(data_path))
-
-    return
+    downloaded_keys = validate_keys_after_download(base_dir + '/' + prefix, suffix)
+    if len(downloaded_keys) != len(keys_gpg):
+        log.error("number of files downloaded is {} and doesn't match with the actual file list of {}, exiting..."
+                  .format(downloaded_keys, keys_gpg))
+        sys.exit(-1)
 
 
 def main():
@@ -145,6 +177,7 @@ def main():
 
     for table in tables:
         transform(table, run_date, put_date)
+        log.info("transformation completed for table {}".format(table))
     t2 = datetime.now()
     print("total time taken: {} seconds".format((t2 - t1).seconds))
 
